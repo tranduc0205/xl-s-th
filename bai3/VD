@@ -1,1 +1,176 @@
+% huffman_lab_full_vn.m
+% Demo ma hoa Huffman + ve cay Huffman
+% Chay bang: >> huffman_demo
+
+function huffman_demo()
+fprintf('--- Demo ma hoa Huffman ---\n');
+
+% ===== 1) Khai bao ky hieu va xac suat =====
+symbols = {'A','B','C','D','E','F'};
+p       = [0.32, 0.18, 0.15, 0.14, 0.12, 0.09]; % tong ~1
+
+% ===== 2) Xay cay Huffman va gan ma =====
+tree = huffman_build(symbols, p);
+codes = assign_codes(tree);
+
+fprintf('\nKy hieu -> Ma\n');
+for i = 1:length(symbols)
+    fprintf(' %s -> %s\n', symbols{i}, codes{i});
+end
+
+% ===== 3) Ve cay Huffman =====
+plot_huffman_tree(tree, symbols, codes);
+
+% ===== 4) Ma hoa mot chuoi ky hieu =====
+sample_seq = {'A','B','A','C','F','E','A','D','B','C'};
+bitstream = huffman_encode(sample_seq, symbols, codes);
+fprintf('\nChuoi mau: '); disp(sample_seq);
+fprintf('Bitstream da ma hoa: %s\n', bitstream);
+
+% ===== 5) Giai ma =====
+decoded_seq = huffman_decode(bitstream, tree, symbols);
+fprintf('Chuoi giai ma: '); disp(decoded_seq);
+
+if isequal(sample_seq, decoded_seq)
+    fprintf('Giai ma OK: chuoi giai ma giong chuoi goc.\n');
+else
+    warning('Chuoi giai ma khac chuoi goc!');
+end
+
+% ===== 6) Entropy va do dai trung binh =====
+H = entropy_from_prob(p);
+L_avg = 0;
+for i = 1:length(p)
+    L_avg = L_avg + p(i) * length(codes{i});
+end
+fprintf('\nEntropy H(X) = %.4f bits/ky hieu\n', H);
+fprintf('Do dai ma trung binh L = %.4f bits/ky hieu\n', L_avg);
+fprintf('Do thua L - H = %.4f bits/ky hieu\n', L_avg - H);
+
+end
+
+%% --------------------- Xay cay Huffman ---------------------
+function tree = huffman_build(symbols, prob)
+m = numel(symbols);
+if numel(prob) ~= m, error('symbols va prob phai cung kich thuoc'); end
+if abs(sum(prob)-1)>1e-6, prob = prob/sum(prob); end
+
+nodes = struct('weight', {}, 'symbol', {}, 'left', {}, 'right', {});
+for i = 1:m
+    nodes(i).weight = prob(i);
+    nodes(i).symbol = i;
+    nodes(i).left = [];
+    nodes(i).right = [];
+end
+
+alive = 1:m;
+while numel(alive) > 1
+    weights = arrayfun(@(i) nodes(i).weight, alive);
+    [~, sidx] = sort(weights);
+    i1 = alive(sidx(1)); i2 = alive(sidx(2));
+    newnode.weight = nodes(i1).weight + nodes(i2).weight;
+    newnode.symbol = [];
+    newnode.left = i1; newnode.right = i2;
+    nodes(end+1) = newnode;
+    pos = sort(sidx(1:2), 'descend'); alive(pos(1))=[]; alive(pos(2))=[];
+    alive(end+1) = numel(nodes);
+end
+tree = nodes;
+end
+
+%% --------------------- Gan ma Huffman ---------------------
+function codes = assign_codes(tree)
+n_nodes = numel(tree);
+leaf_mask = arrayfun(@(x) ~isempty(x.symbol), tree);
+leaf_indices = find(leaf_mask);
+m = max([tree(leaf_indices).symbol]);
+codes = cell(1,m);
+
+root = n_nodes;
+if n_nodes==1, codes{tree(1).symbol}='0'; return; end
+
+stack = struct('node', {}, 'code', {});
+stack(1).node=root; stack(1).code='';
+
+while ~isempty(stack)
+    entry = stack(end); stack(end)=[]; 
+    node_idx = entry.node; cur_code = entry.code;
+    node = tree(node_idx);
+    if ~isempty(node.symbol)
+        codes{node.symbol} = cur_code;
+    else
+        if ~isempty(node.right), stack(end+1).node=node.right; stack(end).code=[cur_code '1']; end
+        if ~isempty(node.left),  stack(end+1).node=node.left;  stack(end).code=[cur_code '0']; end
+    end
+end
+end
+
+%% --------------------- Ma hoa ---------------------
+function bitstream = huffman_encode(seq, symbols, codes)
+if ischar(seq), seq = cellstr(num2cell(seq')'); end
+m = length(symbols);
+map = containers.Map;
+for i=1:m, map(char(symbols{i}))=i; end
+
+% su dung cell de nhanh hon
+bit_cells = cell(1,length(seq));
+for k=1:length(seq)
+    key = char(seq{k});
+    idx = map(key);
+    bit_cells{k} = codes{idx};
+end
+bitstream = [bit_cells{:}];
+end
+
+%% --------------------- Giai ma ---------------------
+function decoded_seq = huffman_decode(bitstream, tree, symbols)
+if isempty(bitstream), decoded_seq={}; return; end
+root = numel(tree); cur_node=root; decoded_seq={};
+for i=1:length(bitstream)
+    b = bitstream(i);
+    if b=='0', next_node = tree(cur_node).left;
+    elseif b=='1', next_node = tree(cur_node).right;
+    else error('Bit khong hop le'); end
+    cur_node = next_node;
+    if ~isempty(tree(cur_node).symbol)
+        decoded_seq{end+1} = symbols{tree(cur_node).symbol};
+        cur_node=root;
+    end
+end
+end
+
+%% --------------------- Entropy ---------------------
+function H = entropy_from_prob(p)
+p = p(:); p(p<=0)=[]; H = -sum(p.*log2(p));
+end
+
+%% --------------------- Ve cay Huffman ---------------------
+function plot_huffman_tree(tree, symbols, codes)
+root = numel(tree);
+figure('Name','Cay Huffman','Color','w'); axis off; hold on;
+plot_node(tree, root, symbols, codes, 0, 0, 2);
+end
+
+function plot_node(tree, idx, symbols, codes, x, y, spacing)
+node = tree(idx);
+if ~isempty(node.symbol)
+    lbl = sprintf('%s\n%s', symbols{node.symbol}, codes{node.symbol});
+else
+    lbl = sprintf('%.2f', node.weight);
+end
+text(x, y, lbl, 'HorizontalAlignment','center', ...
+    'VerticalAlignment','middle', 'BackgroundColor','w', 'Margin',1, 'FontSize',10);
+
+dx = spacing/2;
+if ~isempty(node.left)
+    x_left = x-dx; y_child=y-1;
+    plot([x x_left],[y y_child],'k-','LineWidth',1);
+    plot_node(tree,node.left,symbols,codes,x_left,y_child,dx);
+end
+if ~isempty(node.right)
+    x_right = x+dx; y_child=y-1;
+    plot([x x_right],[y y_child],'k-','LineWidth',1);
+    plot_node(tree,node.right,symbols,codes,x_right,y_child,dx);
+end
+end
 
